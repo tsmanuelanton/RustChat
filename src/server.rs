@@ -72,12 +72,13 @@ fn handle_new_connection(mut stream: TcpStream, server_state: &ServerStateSafe) 
         id: client_id.clone(),
         stream: stream.try_clone().unwrap(),
     };
+
     state.clients.push(client);
 
     // unlock de mutex
     drop(state);
 
-    // let msg = format!("Hello client {}\n", client_id);
+    write_to_client(&mut stream, format!("Hello client {client_id}.", ).as_str());
 
     stream.set_read_timeout(UPDATE_TIME).unwrap();
 
@@ -112,12 +113,18 @@ fn read_stream(stream: &mut TcpStream) -> Option<String> {
 Given a message, sends the content to all the clients except to the author.
  */
 fn broadcast_msg(msg: Message, server_state: &ServerStateSafe) {
-    let state = server_state.lock().unwrap();
-    for client in &state.clients {
+    let mut state = server_state.lock().unwrap();
+    for client in &mut state.clients {
         if msg.client_id != client.id {
-            let mut stream = &client.stream;
-            stream.write(msg.text.trim().as_bytes()).unwrap();
+            write_to_client(&mut client.stream,
+                            &*format!("Client {}: {}.", msg.client_id, msg.text.trim()));
         }
     }
     drop(state);
+}
+
+fn write_to_client(stream: &mut TcpStream, str: &str) {
+    if let Err(error) = stream.write(str.as_ref()) {
+        println!("error {}", error);
+    }
 }
