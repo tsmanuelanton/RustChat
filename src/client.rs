@@ -1,6 +1,6 @@
-use std::io::{Read, Write};
+use std::io::{Read, stdin, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::thread::sleep;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::UPDATE_TIME;
@@ -12,20 +12,27 @@ pub fn connect_to(addr: SocketAddr) {
         Ok(stream) => {
             println!("Successful connection");
 
-            // stream.set_read_timeout(Option::from(Duration::from_millis(500)))
-            //     .expect("TODO: panic message");
+            let buffer = String::new();
+            let user_input = Arc::new(Mutex::new(buffer));
 
-            let stream1 = stream.try_clone().expect("");
-            let stream2 = stream.try_clone().expect("");
-            stream2.set_read_timeout(UPDATE_TIME);
+            stream.set_read_timeout(UPDATE_TIME).unwrap();
 
-            let join_handle1 = std::thread::spawn(move || write_stream(&stream1));
-            let join_handle2 = std::thread::spawn(move || read_stream(&stream2));
+            let input_temp = Arc::clone(&user_input);
+            // thread reading content from server
+            std::thread::spawn(move || handle_connection(stream, input_temp));
 
-            join_handle1.join();
-            join_handle2.join();
+            loop {
+                let mut buffer = String::new();
 
-            println!("Closing connection...");
+                stdin().read_line(&mut buffer).unwrap();
+                if !buffer.is_empty() {
+                    let mut input_buffer = user_input.lock().unwrap();
+                    *input_buffer = buffer;
+                    drop(input_buffer);
+                }
+            }
+
+            // println!("Closing connection...");
         }
         Err(error) => {
             println!("Something went wrong while attempting to connect to {addr}: {error}");
@@ -33,24 +40,38 @@ pub fn connect_to(addr: SocketAddr) {
     }
 }
 
-fn read_stream(mut stream: &TcpStream) {
-    if let Ok(addr) = stream.peer_addr() {
-        let mut in_msg = String::new();
-
-        loop {
-            let _ = stream.read_to_string(&mut in_msg);
-            if !in_msg.is_empty() {
-                println!("Server@{addr}: {in_msg}.");
-                in_msg.clear();
-            }
+fn handle_connection(mut stream: TcpStream, user_input: Arc<Mutex<String>>) {
+    loop {
+        // reads the stream
+        if let Some(input) = read_stream(&mut stream) {
+            println!("{}", input);
         }
+        let mut user_input = user_input.lock().unwrap();
+
+        if !user_input.is_empty() {
+            // send input to server
+            stream.write(user_input.as_ref()).unwrap();
+
+            user_input.clear();
+        }
+
+        // unlock mutex
+        drop(user_input);
+
+        std::thread::sleep(Duration::from_millis(500))
     }
 }
 
-fn write_stream(mut stream: &TcpStream) {
-    loop {
-        let mut str = String::new();
-        std::io::stdin().read_line(&mut str).expect("TODO: panic message");
-        stream.write(str.trim().as_bytes()).expect(format!("Failed trying to send {str} to server").as_str());
+
+/*
+ Given a stream, reads it and returns the input.
+ */
+fn read_stream(stream: &mut TcpStream) -> Option<String> {
+    let mut string_buffer = String::new();
+    let _ = stream.read_to_string(&mut string_buffer);
+
+    if !string_buffer.is_empty() {
+        return Some(string_buffer)
     }
+    None
 }

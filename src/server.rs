@@ -40,8 +40,7 @@ pub fn start_server(addr: SocketAddr) {
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
-                        let peer_addr = stream.peer_addr().expect("Getting peer address");
-                        println!("New client {peer_addr}");
+
 
                         // new thread to handle the connection
                         let cloned_state = Arc::clone(&safe_state);
@@ -63,7 +62,10 @@ Adds a new client to the clients list. Reads the stream and send a broadcast to 
 fn handle_new_connection(mut stream: TcpStream, server_state: &ServerStateSafe) {
     let mut state = server_state.lock().unwrap();
 
+    let peer_addr = stream.peer_addr().expect("Getting peer address");
     let client_id = state.clients.len().to_string();
+
+    println!("New client {client_id} from ip {peer_addr}");
 
     // Adds a new client to the clients list
     let client = Client {
