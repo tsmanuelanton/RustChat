@@ -1,82 +1,121 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use crate::UPDATE_TIME;
 
-static mut CLIENTS: Vec<TcpStream> = Vec::new();
+struct Client {
+    id: String,
+    stream: TcpStream,
+}
+
+struct Message {
+    client_id: String,
+    text: String,
+}
+
+type ClientsList = Vec<Client>;
+
+pub struct ServerState {
+    addr: SocketAddr,
+    clients: ClientsList,
+}
+
+pub type ServerStateSafe = Arc<Mutex<ServerState>>;
 
 pub fn start_server(addr: SocketAddr) {
-    match TcpListener::bind(addr) {
-        Ok(listener) => unsafe {
-            println!("Server listening at {addr}");
-            std::thread::spawn(move || wait_input());
+    let state = ServerState {
+        addr,
+        clients: Default::default(),
+    };
 
+    let safe_state = Arc::new(Mutex::new(state));
+
+    match TcpListener::bind(addr) {
+        Ok(listener) => {
+            println!("Server listening at {}", safe_state.lock().unwrap().addr);
+
+            // waits to new connections
             for stream in listener.incoming() {
                 match stream {
-                    Ok(stream)=> {
+                    Ok(stream) => {
                         let peer_addr = stream.peer_addr().expect("Getting peer address");
                         println!("New client {peer_addr}");
-                        CLIENTS.push(stream.try_clone().unwrap());
-                        let len = CLIENTS.len();
-                        std::thread::spawn(move || handle_client(&stream, len));
+
+                        // new thread to handle the connection
+                        let cloned_state = Arc::clone(&safe_state);
+                        thread::spawn(move || { handle_new_connection(stream, &cloned_state) });
                     }
-                    Err(e) => panic!("{e}")
+                    Err(error) => println!("{error}")
                 }
             }
         }
         Err(error) => {
-            panic!("Server couldnt start at {addr}: {error}");
+            panic!("Server couldnt start at {}: {}", safe_state.lock().unwrap().addr, error);
         }
     };
 }
 
-unsafe fn handle_client(mut stream: &TcpStream, client_id: usize) {
-    let msg = format!("Hello client {client_id}\n");
-    stream.write(msg.trim().as_bytes()).expect(
-        format!("Failed trying to send {msg} to client {client_id}").as_str());
+/*
+Adds a new client to the clients list. Reads the stream and send a broadcast to other clients.
+ */
+fn handle_new_connection(mut stream: TcpStream, server_state: &ServerStateSafe) {
+    let mut state = server_state.lock().unwrap();
 
-    // let stream1 = stream.try_clone().expect("");
-    let stream2 = stream.try_clone().expect("");
+    let client_id = state.clients.len().to_string();
 
-    // let join_handle1 = std::thread::spawn(move || write_stream(stream1, client_id));
-    let join_handle2 = std::thread::spawn(move || read_stream(&stream2, &client_id));
+    // Adds a new client to the clients list
+    let client = Client {
+        id: client_id.clone(),
+        stream: stream.try_clone().unwrap(),
+    };
+    state.clients.push(client);
 
-    // let _ = join_handle1.join();
-    let _ = join_handle2.join();
-}
+    // unlock de mutex
+    drop(state);
 
-fn read_stream(mut stream: &TcpStream, client_id: &usize) {
-    let _ = stream.set_read_timeout(UPDATE_TIME);
+    // let msg = format!("Hello client {}\n", client_id);
 
-    if let Ok(addr) = stream.peer_addr() {
-        let mut in_msg = String::new();
+    stream.set_read_timeout(UPDATE_TIME).unwrap();
 
-        loop {
-            let _ = stream.read_to_string(&mut in_msg);
-            if !in_msg.is_empty() {
-                println!("client-{client_id}@{addr}: {in_msg}.");
-                send_msg_clients(&in_msg);
-                in_msg.clear();
-            }
-        }
-    }
-}
-
-fn wait_input() {
     loop {
-        let mut str = String::new();
-        std::io::stdin().read_line(&mut str)
-            .expect("TODO: panic message");
+        // reads the stream
+        if let Some(input) = read_stream(&mut stream) {
+            let msg = Message {
+                client_id: client_id.clone(),
+                text: input,
+            };
 
-        send_msg_clients(&str)
-    }
-}
-
-fn send_msg_clients(str : &String){
-    unsafe {
-        for mut client in &CLIENTS {
-            client.write(str.trim().as_bytes()).expect("d");
+            // send msg back to other clients
+            broadcast_msg(msg, server_state);
         }
     }
 }
 
+/*
+ Given a stream, reads it and returns the input.
+ */
+fn read_stream(stream: &mut TcpStream) -> Option<String> {
+    let mut string_buffer = String::new();
+    let _ = stream.read_to_string(&mut string_buffer);
+
+    if !string_buffer.is_empty() {
+        return Some(string_buffer)
+    }
+    None
+}
+
+/*
+Given a message, sends the content to all the clients except to the author.
+ */
+fn broadcast_msg(msg: Message, server_state: &ServerStateSafe) {
+    let state = server_state.lock().unwrap();
+    for client in &state.clients {
+        if msg.client_id != client.id {
+            let mut stream = &client.stream;
+            stream.write(msg.text.trim().as_bytes()).unwrap();
+        }
+    }
+    drop(state);
+}

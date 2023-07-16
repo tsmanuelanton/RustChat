@@ -1,4 +1,4 @@
-use std::{env, thread};
+use std::env;
 use std::time::Duration;
 
 mod server;
