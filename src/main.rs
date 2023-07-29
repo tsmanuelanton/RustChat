@@ -1,26 +1,43 @@
-use std::env;
-use std::time::Duration;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::sync::Arc;
 
-mod server;
-mod client;
+use hyper::{Server, server::conn::AddrStream};
+use hyper::service::{make_service_fn, service_fn};
 
-const UPDATE_TIME: Option<Duration> = Some(Duration::from_millis(500));
+use crate::chat_server::ServerStateSafe;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let host_type = args.get(1);
-    let addr = std::net::SocketAddr::new("127.0.0.1".parse().unwrap(), 3000);
+mod chat_server;
+mod routes;
 
-    if host_type != None {
-        if matches!(host_type.unwrap().trim(), "server") {
-            println!("Creating a new server...");
-            server::start_server(addr);
-        } else {
-            println!("Attempting to a connect to server at {} ...", addr);
-            client::connect_to(addr);
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    //hyper server boilerplate code from https://hyper.rs/guides/server/hello-world/
+
+    // We'll bind to 127.0.0.1:3000
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+
+    // new thread to handle the connection
+    println!("Listening on {addr} for http or websocket connections.");
+
+    let state = ServerStateSafe::default();
+
+    // A `Service` is needed for every connection, so this
+    // creates one from our `handle_request` function.
+    let make_svc = make_service_fn(move |socket: &AddrStream| {
+        let addr = socket.remote_addr();
+        let state = state.clone();
+        async move {
+            // service_fn converts our function into a `Service`
+            Ok::<_, Infallible>(service_fn(move |req| routes::handle_request(req, addr, Arc::clone(&state))
+            ))
         }
+    });
 
-    }else {
-        println!("Missing host type argument. Add server o client argument.");
+    let server = Server::bind(&addr).serve(make_svc);
+
+    // Run this server for... forever!
+    if let Err(e) = server.await {
+        eprintln!("server error: {e}");
     }
 }
