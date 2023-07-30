@@ -15,7 +15,7 @@ async fn main() {
     //hyper server boilerplate code from https://hyper.rs/guides/server/hello-world/
 
     // We'll bind to 127.0.0.1:3000
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
 
     // new thread to handle the connection
     println!("Listening on {addr} for http or websocket connections.");

@@ -84,9 +84,9 @@ async fn broadcast_msg(msg: Msg, server_state: &ServerStateSafe) {
     let state = server_state.lock().await;
 
     for client in &state.clients {
-        if msg.client_id != client.id {
-            let msg_json = Message::Text(serde_json::to_string(&msg).unwrap());
-            client.sender.send(msg_json).unwrap();
-        }
+        // if msg.client_id != client.id {
+        let msg_json = Message::Text(serde_json::to_string(&msg).unwrap());
+        client.sender.send(msg_json).unwrap();
+        // }
     }
 }
