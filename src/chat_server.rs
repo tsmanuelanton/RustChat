@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use futures::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::WebSocketStream;
@@ -55,8 +56,20 @@ pub async fn handle_new_connection(
         sender: tx,
     };
 
-    state.clients.push(client);
+    state.clients.push(client.clone());
     drop(state);
+
+    let info = Message::Text(
+        serde_json::to_string(&json!(
+                {
+                    "client_id": client_id.clone(),
+                    "welcome": "Welcome to the chat!",
+                }
+        ))
+        .unwrap(),
+    );
+
+    client.sender.send(info).unwrap();
 
     // split socket for simultaneous reading and writing
     let (mut sink, mut read) = ws.split();
