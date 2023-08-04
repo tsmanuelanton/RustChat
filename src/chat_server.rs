@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use futures::stream::SplitStream;
 use futures::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use tungstenite::Message;
 #[derive(Clone)]
 pub struct Client {
     id: String,
+    nickname: String,
     addr: SocketAddr,
     sender: UnboundedSender<Message>,
 }
@@ -21,6 +23,7 @@ pub struct Client {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Msg {
     pub(crate) client_id: String,
+    pub(crate) nickname: String,
     pub(crate) text: String,
     pub(crate) created_at: SystemTime,
 }
@@ -41,40 +44,16 @@ pub async fn handle_new_connection(
     addr: SocketAddr,
     server_state: &ServerStateSafe,
 ) {
-    let mut state = server_state.lock().await;
-    let client_id = state.clients.len().to_string();
-    println!("New client {client_id} from ip {addr}");
+    println!("New connection from ip {addr}");
 
     // create async channel for communicating between tasks
     let (tx, mut rx): (UnboundedSender<Message>, UnboundedReceiver<Message>) =
         mpsc::unbounded_channel();
 
-    // Adds a new client to the clients list
-    let client = Client {
-        id: client_id.clone(),
-        addr,
-        sender: tx,
-    };
-
-    state.clients.push(client.clone());
-    drop(state);
-
-    let info = Message::Text(
-        serde_json::to_string(&json!(
-                {
-                    "client_id": client_id.clone(),
-                    "welcome": "Welcome to the chat!",
-                }
-        ))
-        .unwrap(),
-    );
-
-    client.sender.send(info).unwrap();
-
     // split socket for simultaneous reading and writing
     let (mut sink, mut read) = ws.split();
-
-    let client_id_cloned = client_id.clone();
+    let client = handshake(&mut sink, &mut read, server_state, addr, tx).await;
+    let client_id_cloned = client.id.clone();
     let state = server_state.clone();
     // task for sending the received msg from channel to the ws
     tokio::spawn(async move {
@@ -105,7 +84,8 @@ pub async fn handle_new_connection(
     // received msg from client through ws broadcast to the other clients
     while let Some(Ok(result)) = read.next().await {
         let msg = Msg {
-            client_id: client_id.clone(),
+            client_id: client.id.clone(),
+            nickname: client.nickname.clone(),
             text: result.to_string(),
             created_at: SystemTime::now(),
         };
@@ -117,13 +97,73 @@ pub async fn handle_new_connection(
 }
 
 /*
+When a new connection, asks the nickname to the client and adds it to the clients list.
+ */
+async fn handshake(
+    sink: &mut futures::stream::SplitSink<WebSocketStream<Upgraded>, Message>,
+    read: &mut SplitStream<WebSocketStream<Upgraded>>,
+    server_state: &Arc<Mutex<ServerState>>,
+    addr: SocketAddr,
+    tx: UnboundedSender<Message>,
+) -> Client {
+    let ask_nickname = Message::Text(
+        serde_json::to_string(&json!({
+            "handshake": {
+                "nickname": "Tell me your nickname",
+            }
+        }))
+        .unwrap(),
+    );
+    sink.send(ask_nickname).await.unwrap();
+    let result = read.next().await.unwrap().unwrap();
+    let nickname = result.to_string();
+
+    let mut state = server_state.lock().await;
+    let client_id = state.clients.len().to_string();
+
+    // Adds a new client to the clients list
+    let client = Client {
+        id: client_id.clone(),
+        addr,
+        nickname: nickname.clone(),
+        sender: tx,
+    };
+
+    state.clients.push(client.clone());
+    drop(state);
+
+    let welcome_client: Message = Message::Text(
+        serde_json::to_string(&json!( {
+                "handshake": {
+                    "client_id": client_id.clone(),
+                    "welcome": format!("Welcome to the chat {}!", nickname.trim()),
+                }
+            }
+        ))
+        .unwrap(),
+    );
+
+    sink.send(welcome_client).await.unwrap();
+    client
+}
+
+/*
 Given a message, sends the content to all the clients except to the author.
  */
 async fn broadcast_msg(msg: Msg, server_state: &ServerStateSafe) {
     let state = server_state.lock().await;
 
     for client in &state.clients {
-        let msg_json = Message::Text(serde_json::to_string(&msg).unwrap());
+        let msg_json = Message::Text(
+            serde_json::to_string(&json!({
+                "message": {
+                    "client_id": msg.client_id,
+                    "nickname": msg.nickname,
+                    "text": msg.text,
+                    "created_at": msg.created_at,
+                }
+            })).unwrap()
+        );
         client.sender.send(msg_json).unwrap();
     }
 }
