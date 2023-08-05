@@ -53,7 +53,13 @@ pub async fn handle_new_connection(
 
     // split socket for simultaneous reading and writing
     let (mut sink, mut read) = ws.split();
+
+    // handshake with the client to get the nickname
     let client = handshake(&mut sink, &mut read, server_state, addr, tx).await;
+
+    // send all the previous messages to the client
+    send_client_prev_msgs(server_state, &client).await;
+
     let client_id_cloned = client.id.clone();
     let state = server_state.clone();
     // task for sending the received msg from channel to the ws
@@ -102,6 +108,27 @@ pub async fn handle_new_connection(
         state.messages.push(msg.clone());
         drop(state);
         broadcast_msg(msg, server_state).await;
+    }
+}
+
+/*
+Sends all the previous messages to the client.
+ */
+async fn send_client_prev_msgs(server_state: &Arc<RwLock<ServerState>>, client: &Client) {
+    let state = server_state.read().await;
+    for msg in &state.messages {
+        let msg_json = Message::Text(
+            serde_json::to_string(&json!({
+                "message": {
+                    "client_id": msg.client_id,
+                    "nickname": msg.nickname,
+                    "text": msg.text,
+                    "created_at": msg.created_at,
+                }
+            }))
+            .unwrap(),
+        );
+        client.sender.send(msg_json).unwrap();
     }
 }
 

@@ -10,7 +10,7 @@ export default function Message(props: {
     <div class={`d-flex m-2 ${mine_msg ? "justify-content-end" : ""}`}>
       <div class="card" style={"max-width: 75%"}>
         <div class="card-body justify-content-end">
-          <h5 class="card-title text-body-secondary">{`Client ${props.message.nickname}`}</h5>
+          <h5 class="card-title text-body-secondary">{props.message.nickname}</h5>
           <p class="card-text"> {`${props.message.text}`}</p>
           <p
             class={`text-body-secondary d-flex ${
