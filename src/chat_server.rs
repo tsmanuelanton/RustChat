@@ -7,10 +7,11 @@ use futures::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::RwLock;
+use tokio::sync::{mpsc, mpsc::UnboundedReceiver, mpsc::UnboundedSender};
 use tokio_tungstenite::WebSocketStream;
-use tungstenite::Message;
+use tungstenite::{Error, Message};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Client {
@@ -34,7 +35,7 @@ pub struct ServerState {
     pub(crate) messages: Vec<Msg>,
 }
 
-pub type ServerStateSafe = Arc<Mutex<ServerState>>;
+pub type ServerStateSafe = Arc<RwLock<ServerState>>;
 
 /*
 Adds a new client to the clients list. Reads the stream and send a broadcast to other clients.
@@ -62,9 +63,9 @@ pub async fn handle_new_connection(
             match sink.send(msg).await {
                 Ok(_) => (),
                 Err(e) => match e.into() {
-                    tokio_tungstenite::tungstenite::Error::ConnectionClosed => {
+                    Error::ConnectionClosed => {
                         println!("Client {client_id_cloned} disconnected");
-                        let mut server_state = state.lock().await;
+                        let mut server_state = state.write().await;
                         if let Some(index) = server_state
                             .clients
                             .iter()
@@ -78,7 +79,15 @@ pub async fn handle_new_connection(
                 },
             }
         }
-        sink.close().await.unwrap();
+        // close the socket
+        if let Err(e) = sink.close().await {
+            match e.into() {
+                Error::ConnectionClosed => {}
+                e => {
+                    panic!("Error closing the socket: {}", e)
+                }
+            }
+        }
     });
 
     // received msg from client through ws broadcast to the other clients
@@ -89,7 +98,7 @@ pub async fn handle_new_connection(
             text: result.to_string(),
             created_at: SystemTime::now(),
         };
-        let mut state = server_state.lock().await;
+        let mut state = server_state.write().await;
         state.messages.push(msg.clone());
         drop(state);
         broadcast_msg(msg, server_state).await;
@@ -102,7 +111,7 @@ When a new connection, asks the nickname to the client and adds it to the client
 async fn handshake(
     sink: &mut futures::stream::SplitSink<WebSocketStream<Upgraded>, Message>,
     read: &mut SplitStream<WebSocketStream<Upgraded>>,
-    server_state: &Arc<Mutex<ServerState>>,
+    server_state: &Arc<RwLock<ServerState>>,
     addr: SocketAddr,
     tx: UnboundedSender<Message>,
 ) -> Client {
@@ -118,9 +127,7 @@ async fn handshake(
     let result = read.next().await.unwrap().unwrap();
     let nickname = result.to_string();
 
-    let mut state = server_state.lock().await;
-    let client_id = state.clients.len().to_string();
-
+    let client_id = Uuid::new_v4().to_string();
     // Adds a new client to the clients list
     let client = Client {
         id: client_id.clone(),
@@ -129,13 +136,14 @@ async fn handshake(
         sender: tx,
     };
 
+    let mut state = server_state.write().await;
     state.clients.push(client.clone());
     drop(state);
 
     let welcome_client: Message = Message::Text(
         serde_json::to_string(&json!( {
                 "handshake": {
-                    "client_id": client_id.clone(),
+                    "client_id": client_id,
                     "welcome": format!("Welcome to the chat {}!", nickname.trim()),
                 }
             }
@@ -151,7 +159,7 @@ async fn handshake(
 Given a message, sends the content to all the clients except to the author.
  */
 async fn broadcast_msg(msg: Msg, server_state: &ServerStateSafe) {
-    let state = server_state.lock().await;
+    let state = server_state.read().await;
 
     for client in &state.clients {
         let msg_json = Message::Text(
@@ -162,7 +170,8 @@ async fn broadcast_msg(msg: Msg, server_state: &ServerStateSafe) {
                     "text": msg.text,
                     "created_at": msg.created_at,
                 }
-            })).unwrap()
+            }))
+            .unwrap(),
         );
         client.sender.send(msg_json).unwrap();
     }

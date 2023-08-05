@@ -8,7 +8,6 @@ export default function Home() {
   const [messages, setMessages] = createSignal<MessageType[]>([]);
   const [client, setClient] = createSignal<string>();
   const [nickname, setNickname] = createSignal<string>();
-  let inputMsg: HTMLInputElement;
 
   const ws = new WebSocket("ws://127.0.0.1:8000/connect-chat");
 

@@ -25,7 +25,7 @@ pub async fn handle_request(request: Request<Body>, addr: SocketAddr, state: Ser
 
             match url {
                 "/chat" => {
-                    let state = state.lock().await;
+                    let state = state.read().await;
                     let res = serde_json::to_string(&state.messages).unwrap();
                     Ok(Response::new(Body::from(res)))
                 }
