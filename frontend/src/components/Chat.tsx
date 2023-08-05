@@ -1,17 +1,18 @@
 import { MessageType } from "~/types";
 import "bootstrap/dist/css/bootstrap.css";
 import ChatView from "./ChatView";
+import { Accessor } from "solid-js";
 
 export default function Chat(props: {
-  nickname: string;
-  client: string;
+  nickname: Accessor<string>;
+  client: Accessor<string>;
   onSubmitMessage: (event: any) => void;
-  messages: MessageType[];
+  messages: Accessor<MessageType[]>;
 }) {
   return (
     <>
-      <p class="fs-5">You're client {props.nickname}</p>
-      <ChatView messages={props.messages} self_client={props.client} />
+      <p class="fs-5">You're client {props.nickname()}</p>
+      <ChatView messages={props.messages} selfClient={props.client} />
 
       <form onSubmit={props.onSubmitMessage}>
         <div class="d-flex justify-content-center gap-2">
