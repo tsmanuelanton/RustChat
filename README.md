@@ -11,7 +11,7 @@ Frontend uses Solid.js and TypeScript (a faster React.js alternative).
 
 <p align="center">
   <a href="https://skillicons.dev">
-    <img src="https://skillicons.dev/icons?i=rust,ts,html,solidjs" alt="Technologies" />
+    <img src="https://skillicons.dev/icons?i=rust,ts,html,solidjs,bootstrap" alt="Technologies" />
   </a>
 </p>
 
